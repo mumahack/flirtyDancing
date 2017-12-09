@@ -6,7 +6,7 @@
 #include "Adafruit_GFX.h"
 #include "Adafruit_SSD1306.h"
 #include "Adafruit_MPR121.h"
-
+#include <EEPROM.h>
 #include <RtcDS3231.h>
 //
 //TODO _> I2c DS1302 or DS3231
@@ -22,6 +22,14 @@ bool blinkColon = false;
 int16_t ax, ay, az, gx, gy, gz;
 const int MPU_addr=0x68;  // I2C address of the MPU-6050
 
+/*
+I2C device found at address 0x3C  !
+I2C device found at address 0x50  !
+I2C device found at address 0x68  !
+I2C device found at address 0x69 
+*/
+
+
 #define OLED_RESET D1 // Not Connected, software just requires it
 #define PIXEL_COUNT 60 // need to count
 #define defaultBrightness 100 // should I reserve energy?
@@ -29,15 +37,6 @@ const int MPU_addr=0x68;  // I2C address of the MPU-6050
 
 #define PIX_PIN D1 
 #define SWITCH_PIN D7
-
-#define STAMPERL_PIN D6
-#define COMPENSATION_PIN D5
-//D3,D4 - i2c
-#define FRONT_PIN D5
-
-#define BACK_PIN D7
-#define STEP_PIN D8
-#include <EEPROM.h>
 
 SimpleTimer timer;
 Servo stamperl;
@@ -71,7 +70,7 @@ int meanActivitySampleRate = 10;
 void setup() {
   EEPROM.begin(512);
 
-  storeVal(3,0);
+  //storeVal(3,0);
   
   Serial.begin(9600);
   Wire.begin(D2,D3);
@@ -165,6 +164,7 @@ void readActivity(){
     }
   }else{
     sum += abs(ax)/10 + abs(ay)/10 + abs(az)/10;
+    //sum += abs(gx)/10 + abs(gy)/10 + abs(gz)/10;
     sumCount++;
   }
 }
@@ -335,8 +335,14 @@ void animateLed() {
     minimum = 0;
     maximum = 14;
   }
-  
+
   for(int i=8; i < 16; i++) {
+        
+        strip.setPixelColor(i, 0x000000);
+  }
+  
+  for(int i=8; i < 9 + (8 - currentActivity * 2) ; i++) {
+        
         strip.setPixelColor(i, Wheel(random(minimum, maximum)));
   }
   strip.show();
