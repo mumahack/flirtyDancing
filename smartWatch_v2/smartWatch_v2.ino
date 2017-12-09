@@ -54,28 +54,63 @@ RtcDS3231<TwoWire> Rtc(Wire);
 
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(PIXEL_COUNT, PIX_PIN, NEO_GRB + NEO_KHZ800);
 
-volatile long meanValue = 0;
+
+const char *ssid = "Anton-0tcsbiez6m"; // "Berta-8axlgha56g"
+const char *password = "spoon";
+
+volatile int dancedTonight = 0;
+volatile int currentActivity = 4; // unfortunately inverted...
+volatile unsigned long sum = 0;
+volatile unsigned long meanValue = 0;
+int sumCount = 0;
+int sampleRate = 5;
+long meanActivitySum = 0;
+int  meanActivityCounter = 0;
+int meanActivitySampleRate = 10;
 
 void setup() {
   EEPROM.begin(512);
+
+  storeVal(3,0);
+  
   Serial.begin(9600);
   Wire.begin(D2,D3);
   pinMode(SWITCH_PIN, INPUT_PULLUP);
   initDisplay();
   welcome();
- 
+  initMPU();
   
 
   strip.begin();
   strip.setBrightness(defaultBrightness); // should be stored in EEPROM
-  for( int i = 0; i < 100; i++){
-    strip.setPixelColor(i, 0xff8200); 
-  }
   strip.show();
   delay(1000);
 
   Rtc.Begin();
-  RtcDateTime compiled = RtcDateTime(__DATE__, __TIME__);
+  RtcDateTime now = Rtc.GetDateTime();
+  // day month
+
+  int lastDancedMonth = restoreVal(1);
+  int lastDancedDay = restoreVal(2);
+
+  if(now.Month() != lastDancedMonth || now.Day() != lastDancedDay){
+    storeVal(1, now.Month());
+    storeVal(2, now.Day());
+    storeVal(3,dancedTonight);
+    storeVal(4,currentActivity);
+  }else{
+    dancedTonight = restoreVal(3);
+    currentActivity = restoreVal(4);
+  }
+
+  updateDanced(); // will be called by readyFordanced
+
+  timer.setInterval(50, animateLed);
+  timer.setInterval(100, readActivity);
+  timer.setInterval(1000, readyForDanced); // at first to fake it just press
+  timer.setInterval(1000, updateOLED);
+  
+  pinMode(SWITCH_PIN, INPUT_PULLUP);
 }
 
 //----------------------------------------------------------------------
@@ -84,13 +119,84 @@ void loop() { // main loop does not need to be changed
 
   //Serial.println(analogRead(A0)); // microphone
   //Serial.println(digitalRead(SWITCH_PIN)); // push button
+
+  timer.run();
+} 
+
+void showClock(){
   RtcDateTime now = Rtc.GetDateTime();
   display.clearDisplay();
   showBigAtLineWith(0, String(now.Month()) + "/" + String(now.Day()));
   showBigAtLineWith(1, String(now.Hour()) + ":" + String(now.Minute()) + ":" + String(now.Second()) );
   display.display();
-} 
+}
 
+void updateDanced(){
+  strip.clear();
+  for( int i = 0; i < dancedTonight; i++){
+    strip.setPixelColor(i, 0xffffff); 
+  }
+  strip.show();
+}
+
+
+void readActivity(){
+  readMPU();
+  if(sumCount >= sampleRate){
+    meanValue = sum/(sampleRate + 1);
+    sum = 0;
+    sumCount = 0;
+    //meanActivitySum = map();
+    meanActivitySum += map(meanValue, 1600, 1800, 0, 4);
+    meanActivityCounter++;
+    if(meanActivityCounter >= meanActivitySampleRate){
+      if(currentActivity > meanActivitySum/(meanActivitySampleRate + 1)){
+        if(currentActivity > 0){
+          currentActivity--;
+        }
+      }else if(currentActivity < meanActivitySum/(meanActivitySampleRate + 1)){
+        if(currentActivity < 4){
+          currentActivity++;
+        }
+      }
+      storeVal(4,currentActivity);
+      meanActivitySum = 0;
+      meanActivitySampleRate = 0;
+    }
+  }else{
+    sum += abs(ax)/10 + abs(ay)/10 + abs(az)/10;
+    sumCount++;
+  }
+}
+
+void updateOLED(){
+  showOneLine(String(currentActivity));
+}
+
+
+int ledState = HIGH;  
+int buttonState;             // the current reading from the input pin
+int lastButtonState = LOW;   // the previous reading from the input pin
+
+// the following variables are unsigned long's because the time, measured in miliseconds,
+// will quickly become a bigger number than can be stored in an int.
+unsigned long lastDebounceTime = 0;  // the last time the output pin was toggled
+unsigned long debounceDelay = 50;
+
+void readyForDanced(){
+  int reading = digitalRead(SWITCH_PIN);
+  if(reading == LOW){
+    if(dancedTonight < 8){
+      dancedTonight++;
+      storeVal(3,dancedTonight);
+      updateDanced();
+    } else {
+      dancedTonight = 0;
+      storeVal(3,dancedTonight);
+      updateDanced();
+    }
+  }
+}
 //----------------------------------------------------------------------
 void showOneLine(String message){
 //----------------------------------------------------------------------
@@ -138,9 +244,8 @@ void welcome(){
 //----------------------------------------------------------------------
     display.clearDisplay();
     
-    showBigAtLineWith(0, "Kenny.");
-    showBigAtLineWith(1, "Industries");
-
+    showBigAtLineWith(0, "FLIRTY");
+    showBigAtLineWith(1, "DANCING <3");
     display.display();
 }
 
@@ -167,16 +272,72 @@ void readMPU(){
   Serial.print("AcX = "); Serial.print(ax);
   Serial.print(" | AcY = "); Serial.print(ay);
   Serial.print(" | AcZ = "); Serial.print(az);
+  Serial.println();
   //Serial.print(" | Tmp = "); Serial.print(temperature/340.00+36.53);  //equation for temperature in degrees C from datasheet
-/*
+
   Serial.print(" | GyX = "); Serial.print(gx);
   Serial.print(" | GyY = "); Serial.print(gy);
   Serial.print(" | GyZ = "); Serial.println(gz);
- */
+ 
   //gx -> pitch
   //gy -> roll
   // gz -> az
   //ax -> roll acc
   //ay -> pitch acc
   //az -> yaw acc
+}
+//----------------------------------------------------------------------
+void storeVal(int addr, int val){
+//----------------------------------------------------------------------
+  EEPROM.write(addr, val);
+  EEPROM.commit();
+}
+
+//----------------------------------------------------------------------
+int restoreVal(int addr){
+//----------------------------------------------------------------------
+  return EEPROM.read(addr);
+}
+
+uint32_t Wheel(byte WheelPos) {
+  WheelPos = 255 - WheelPos;
+  if(WheelPos < 85) {
+    return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+  }
+  if(WheelPos < 170) {
+    WheelPos -= 85;
+    return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+  }
+  WheelPos -= 170;
+  return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+}
+
+void animateLed() {
+  uint16_t minimum, maximum;
+  switch (currentActivity) {
+  case 4: // violet
+    minimum = 210;
+    maximum = 230;
+    break;
+  case 3: // blue
+    minimum = 120;
+    maximum = 160;
+    break;
+  case 2: // green
+     minimum = 50;
+    maximum = 70;
+    break;
+  case 1: // yellow
+    minimum = 28;
+    maximum = 40;
+    break;
+  default: // red
+    minimum = 0;
+    maximum = 14;
+  }
+  
+  for(int i=8; i < 16; i++) {
+        strip.setPixelColor(i, Wheel(random(minimum, maximum)));
+  }
+  strip.show();
 }
